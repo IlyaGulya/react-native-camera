@@ -23,6 +23,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 
 public class MutableImage {
     private static final String TAG = "RNCamera";
@@ -44,6 +45,21 @@ public class MutableImage {
     public int getHeight() {
         return this.currentRepresentation.getHeight();
     }
+
+    public MutableImage(Bitmap originalImage) {
+        this.currentRepresentation = originalImage;
+        int size = originalImage.getRowBytes() * originalImage.getHeight();
+        ByteBuffer byteBuffer = ByteBuffer.allocate(size);
+        originalImage.copyPixelsToBuffer(byteBuffer);
+        this.originalImageData = byteBuffer.array();
+    }
+
+    public byte[] getOriginalImageData() { return this.originalImageData; }
+
+    public Bitmap getCurrentRepresentation(){
+        return this.currentRepresentation;
+    }
+
 
     public void mirrorImage() throws ImageMutationFailedException {
         Matrix m = new Matrix();
@@ -106,7 +122,7 @@ public class MutableImage {
     }
 
     //see http://www.impulseadventure.com/photo/exif-orientation.html
-    private void rotate(int exifOrientation) throws ImageMutationFailedException {
+    public void rotate(int exifOrientation) throws ImageMutationFailedException {
         final Matrix bitmapMatrix = new Matrix();
         switch (exifOrientation) {
             case 1:
@@ -171,32 +187,34 @@ public class MutableImage {
         return Base64.encodeToString(toJpeg(currentRepresentation, jpegQualityPercent), Base64.DEFAULT);
     }
 
-    public void writeDataToFile(File file, ReadableMap options, int jpegQualityPercent) throws IOException {
+    public void writeDataToFile(File file, ReadableMap options, int jpegQualityPercent, boolean writeExif) throws IOException {
         FileOutputStream fos = new FileOutputStream(file);
         fos.write(toJpeg(currentRepresentation, jpegQualityPercent));
         fos.close();
 
-        try {
-            ExifInterface exif = new ExifInterface(file.getAbsolutePath());
+        if(writeExif) {
+            try {
+                ExifInterface exif = new ExifInterface(file.getAbsolutePath());
 
-            // copy original exif data to the output exif...
-            // unfortunately, this Android ExifInterface class doesn't understand all the tags so we lose some
-            for (Directory directory : originalImageMetaData().getDirectories()) {
-                for (Tag tag : directory.getTags()) {
-                    int tagType = tag.getTagType();
-                    Object object = directory.getObject(tagType);
-                    exif.setAttribute(tag.getTagName(), object.toString());
+                // copy original exif data to the output exif...
+                // unfortunately, this Android ExifInterface class doesn't understand all the tags so we lose some
+                for (Directory directory : originalImageMetaData().getDirectories()) {
+                    for (Tag tag : directory.getTags()) {
+                        int tagType = tag.getTagType();
+                        Object object = directory.getObject(tagType);
+                        exif.setAttribute(tag.getTagName(), object.toString());
+                    }
                 }
+
+                writeLocationExifData(options, exif);
+
+                if (hasBeenReoriented)
+                    rewriteOrientation(exif);
+
+                exif.saveAttributes();
+            } catch (ImageProcessingException | IOException e) {
+                Log.e(TAG, "failed to save exif data", e);
             }
-
-            writeLocationExifData(options, exif);
-
-            if(hasBeenReoriented)
-                rewriteOrientation(exif);
-
-            exif.saveAttributes();
-        } catch (ImageProcessingException  | IOException e) {
-            Log.e(TAG, "failed to save exif data", e);
         }
     }
 
