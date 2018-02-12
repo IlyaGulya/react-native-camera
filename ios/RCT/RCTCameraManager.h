@@ -16,7 +16,8 @@ typedef NS_ENUM(NSInteger, RCTCameraCaptureSessionPreset) {
   RCTCameraCaptureSessionPresetPhoto = 3,
   RCTCameraCaptureSessionPreset480p = 4,
   RCTCameraCaptureSessionPreset720p = 5,
-  RCTCameraCaptureSessionPreset1080p = 6
+  RCTCameraCaptureSessionPreset1080p = 6,
+  RCTCameraCaptureSessionPreset4k = 7
 };
 
 typedef NS_ENUM(NSInteger, RCTCameraCaptureMode) {
@@ -72,6 +73,9 @@ typedef NS_ENUM(NSInteger, RCTCameraTorchMode) {
 @property (nonatomic, assign) NSInteger orientation;
 @property (nonatomic, assign) BOOL mirrorImage;
 @property (nonatomic, assign) BOOL cropToPreview;
+@property (nonatomic, assign) BOOL barcodeFinderVisible;
+@property (nonatomic, assign) double barcodeFinderPercentageSizeWidth;
+@property (nonatomic, assign) double barcodeFinderPercentageSizeHeight;
 @property (nonatomic, strong) NSArray* barCodeTypes;
 @property (nonatomic, strong) RCTPromiseResolveBlock videoResolve;
 @property (nonatomic, strong) RCTPromiseRejectBlock videoReject;

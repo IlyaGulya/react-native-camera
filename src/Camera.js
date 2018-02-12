@@ -8,12 +8,15 @@ import {
   StyleSheet,
   requireNativeComponent,
   ViewPropTypes,
-  PermissionsAndroid,
-  ActivityIndicator,
+  Dimensions,
   View,
   Text,
+  ActivityIndicator,
+  PermissionsAndroid,
 } from 'react-native';
+import BarcodeFinder from './BarcodeFinder';
 
+const { height, width } = Dimensions.get('window');
 const CameraManager = NativeModules.CameraManager || NativeModules.CameraModule;
 const CAMERA_REF = 'camera';
 
@@ -87,6 +90,7 @@ export default class Camera extends Component {
     onBarCodeRead: PropTypes.func,
     barcodeScannerEnabled: PropTypes.bool,
     cropToPreview: PropTypes.bool,
+    clearWindowBackground: PropTypes.bool,
     onFocusChanged: PropTypes.func,
     onZoomChanged: PropTypes.func,
     mirrorImage: PropTypes.bool,
@@ -100,6 +104,11 @@ export default class Camera extends Component {
     permissionDialogMessage: PropTypes.string,
     notAuthorizedView: PropTypes.element,
     pendingAuthorizationView: PropTypes.element,
+    barcodeFinderVisible: PropTypes.bool,
+    barcodeFinderWidth: PropTypes.number,
+    barcodeFinderHeight: PropTypes.number,
+    barcodeFinderStyle: PropTypes.object,
+    barcodeFinderPercentageSize: PropTypes.array,
   };
 
   static defaultProps = {
@@ -117,7 +126,13 @@ export default class Camera extends Component {
     torchMode: CameraManager.TorchMode.off,
     mirrorImage: false,
     cropToPreview: false,
+    clearWindowBackground: false,
     barCodeTypes: Object.values(CameraManager.BarCodeType),
+    barcodeFinderVisible: false,
+    barcodeFinderWidth: 200,
+    barcodeFinderHeight: 200,
+    barcodeFinderStyle: { borderColor: 'rgba(255,255,255,0.6)', borderWidth: 1 },
+    barcodeFinderComponent: <BarcodeFinder />,
     permissionDialogTitle: '',
     permissionDialogMessage: '',
     notAuthorizedView: (
@@ -191,18 +206,16 @@ export default class Camera extends Component {
         message: this.props.permissionDialogMessage,
       });
 
-      // On devices before SDK version 23, the permissions are automatically granted if they appear in the manifest, 
+      // On devices before SDK version 23, the permissions are automatically granted if they appear in the manifest,
       // so check and request should always be true.
       // https://github.com/facebook/react-native-website/blob/master/docs/permissionsandroid.md
-      const isAuthorized = Platform.Version >= 23
-		      ? granted === PermissionsAndroid.RESULTS.GRANTED
-          : granted === true;
-      
+      const isAuthorized =
+        Platform.Version >= 23 ? granted === PermissionsAndroid.RESULTS.GRANTED : granted === true;
+
       this.setState({
-	      isAuthorized,
-		    isAuthorizationChecked: true
+        isAuthorized,
+        isAuthorizationChecked: true,
       });
-      
     } else {
       this.setState({ isAuthorized: true, isAuthorizationChecked: true });
     }
@@ -240,14 +253,61 @@ export default class Camera extends Component {
     }
   }
 
+  _child() {
+    var props = {
+      style: this.props.barcodeFinderStyle,
+      width: this.props.barcodeFinderWidth,
+      height: this.props.barcodeFinderHeight,
+    };
+    return React.cloneElement(this.props.barcodeFinderComponent, props);
+  }
+
   render() {
+    // Should we show barcode finder, use in child or use default
+    var childs = null;
+    var barcodeFinderPercentageSize = [0, 0];
+    if (this.props.barcodeFinderVisible) {
+      // we need % size of viewFinder
+      barcodeFinderPercentageSize = [
+        this.props.barcodeFinderWidth / width,
+        this.props.barcodeFinderHeight / height,
+      ];
+      childs = (
+        <View
+          style={{
+            left: 0,
+            right: 0,
+            bottom: 0,
+            top: 0,
+            position: 'absolute',
+            justifyContent: 'center',
+            alignItems: 'center',
+          }}
+        >
+          <View
+            style={{ width: this.props.barcodeFinderWidth, height: this.props.barcodeFinderHeight }}
+          >
+            {this._child()}
+          </View>
+        </View>
+      );
+    }
     // TODO - style is not used, figure it out why
     // eslint-disable-next-line
     const style = [styles.base, this.props.style];
-    const nativeProps = convertNativeProps(this.props);
+    const nativeProps = convertNativeProps(
+      Object.assign({}, this.props, { barcodeFinderPercentageSize }),
+    );
 
     if (this.state.isAuthorized) {
-      return <RCTCamera ref={CAMERA_REF} {...nativeProps} />;
+      return (
+        <View style={{ flex: 1 }}>
+          <View style={{ flex: 1 }}>
+            <RCTCamera ref={CAMERA_REF} {...nativeProps} />
+          </View>
+          {childs}
+        </View>
+      );
     } else if (!this.state.isAuthorizationChecked) {
       return this.props.pendingAuthorizationView;
     } else {
@@ -276,7 +336,7 @@ export default class Camera extends Component {
       mirrorImage: props.mirrorImage,
       fixOrientation: props.fixOrientation,
       cropToPreview: props.cropToPreview,
-      ...options
+      ...options,
     };
 
     if (options.mode === Camera.constants.CaptureMode.video) {

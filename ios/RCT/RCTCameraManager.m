@@ -106,7 +106,9 @@ RCT_EXPORT_MODULE();
                @"720p": @(RCTCameraCaptureSessionPreset720p),
                @"AVCaptureSessionPreset1280x720": @(RCTCameraCaptureSessionPreset720p),
                @"1080p": @(RCTCameraCaptureSessionPreset1080p),
-               @"AVCaptureSessionPreset1920x1080": @(RCTCameraCaptureSessionPreset1080p)
+               @"AVCaptureSessionPreset1920x1080": @(RCTCameraCaptureSessionPreset1080p),
+               @"4k": @(RCTCameraCaptureSessionPreset4k),
+               @"AVCaptureSessionPreset3840x2160": @(RCTCameraCaptureSessionPreset4k)
                },
            @"CaptureTarget": @{
                @"memory": @(RCTCameraCaptureTargetMemory),
@@ -155,6 +157,9 @@ RCT_CUSTOM_VIEW_PROPERTY(captureQuality, NSInteger, RCTCamera) {
       break;
     case RCTCameraCaptureSessionPresetPhoto:
       qualityString = AVCaptureSessionPresetPhoto;
+      break;
+    case RCTCameraCaptureSessionPreset4k:
+      qualityString = AVCaptureSessionPreset3840x2160;
       break;
     case RCTCameraCaptureSessionPreset1080p:
       qualityString = AVCaptureSessionPreset1920x1080;
@@ -302,6 +307,17 @@ RCT_CUSTOM_VIEW_PROPERTY(barCodeTypes, NSArray, RCTCamera) {
   self.barCodeTypes = [RCTConvert NSArray:json];
 }
 
+RCT_CUSTOM_VIEW_PROPERTY(barcodeFinderVisible, BOOL, RCTCamera) {
+  self.barcodeFinderVisible = [RCTConvert BOOL:json];
+}
+
+RCT_CUSTOM_VIEW_PROPERTY(barcodeFinderPercentageSize, NSArray, RCTCamera) {
+    NSArray* arr = [RCTConvert NSArray:json];
+    self.barcodeFinderPercentageSizeWidth = [[arr objectAtIndex:0] doubleValue];
+    self.barcodeFinderPercentageSizeHeight = [[arr objectAtIndex:1] doubleValue];
+}
+
+
 RCT_CUSTOM_VIEW_PROPERTY(captureAudio, BOOL, RCTCamera) {
   BOOL captureAudio = [RCTConvert BOOL:json];
   if (captureAudio) {
@@ -321,6 +337,7 @@ RCT_CUSTOM_VIEW_PROPERTY(captureAudio, BOOL, RCTCamera) {
 - (id)init {
   if ((self = [super init])) {
     self.mirrorImage = false;
+    self.barcodeFinderVisible = false;
 
     self.sessionQueue = dispatch_queue_create("cameraManagerQueue", DISPATCH_QUEUE_SERIAL);
 
@@ -474,11 +491,11 @@ RCT_EXPORT_METHOD(hasFlash:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRej
 
     AVCaptureMetadataOutput *metadataOutput = [[AVCaptureMetadataOutput alloc] init];
     if ([self.session canAddOutput:metadataOutput]) {
-      [metadataOutput setMetadataObjectsDelegate:self queue:self.sessionQueue];
-      [self.session addOutput:metadataOutput];
-      [metadataOutput setMetadataObjectTypes:self.barCodeTypes];
-      self.metadataOutput = metadataOutput;
+        [self.session addOutput:metadataOutput];
+        [metadataOutput setMetadataObjectsDelegate:self queue:self.sessionQueue];
+        [metadataOutput setMetadataObjectTypes:self.barCodeTypes];
     }
+    self.metadataOutput = metadataOutput;
 
     __weak RCTCameraManager *weakSelf = self;
     [self setRuntimeErrorHandlingObserver:[NSNotificationCenter.defaultCenter addObserverForName:AVCaptureSessionRuntimeErrorNotification object:self.session queue:nil usingBlock:^(NSNotification *note) {
@@ -486,11 +503,49 @@ RCT_EXPORT_METHOD(hasFlash:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRej
       dispatch_async(strongSelf.sessionQueue, ^{
         // Manually restarting the session since it must have been stopped due to an error.
         [strongSelf.session startRunning];
+        [strongSelf scanCropArea];
       });
     }]];
 
     [self.session startRunning];
+    [self scanCropArea];
+
   });
+}
+
+- (void)scanCropArea {
+    // we only want to scan specified area
+    // NOTE; Seems we can only set the actual rect after session started, else it doesn't work
+    if (self.barcodeFinderVisible) {
+
+        NSNumber *imageWidth = [NSNumber numberWithFloat:self.previewLayer.frame.size.width];
+        NSNumber *imageHeight = [NSNumber numberWithFloat:self.previewLayer.frame.size.height];
+        double imageUseWidth = [imageWidth doubleValue];
+        double imageUseHeight = [imageHeight doubleValue];
+        double cropWidth = imageUseWidth * self.barcodeFinderPercentageSizeWidth;
+        double cropHeight = imageUseHeight * self.barcodeFinderPercentageSizeHeight;
+        double cropX = (imageUseWidth/2)-(cropWidth/2);
+        double cropY = (imageUseHeight/2)-(cropHeight/2);
+        CGRect scanLimit = CGRectMake(cropX, cropY, cropWidth, cropHeight);
+        CGRect scanBarcodeArea = [_previewLayer metadataOutputRectOfInterestForRect:scanLimit];
+        [self.metadataOutput setRectOfInterest:scanBarcodeArea];
+
+        /* ############################
+         DEBUG PURPOSE, get some values and draw yellow rect of actual scanning area
+         */
+        /*
+        NSLog(@"Display size width: %@, height: %@", imageWidth, imageHeight);
+        NSLog(@"Percent size width: %f, height: %f", self.barcodeFinderPercentageSizeWidth, self.barcodeFinderPercentageSizeHeight);
+        NSLog(@"Crop search area: %@", NSStringFromCGRect(scanLimit));
+        NSLog(@"Crop search converted: %@", NSStringFromCGRect(scanBarcodeArea));
+
+        // PAUSE AND PLAY WILL DRAW YELLOW RECT, IF VALID, might appear auto as well. who knows.
+        UIView *scanAreaView = [[UIView alloc] initWithFrame:scanLimit];
+        scanAreaView.layer.borderColor = [UIColor yellowColor].CGColor;
+        scanAreaView.layer.borderWidth = 4;
+        [self.view addSubview:scanAreaView];
+        */
+    }
 }
 
 - (void)stopSession {
@@ -611,7 +666,7 @@ RCT_EXPORT_METHOD(hasFlash:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRej
       UIGraphicsEndImageContext();
 
       NSData *imageData = UIImageJPEGRepresentation(image, 1.0);
-      [self saveImage:imageData target:target metadata:nil resolve:resolve reject:reject];
+      [self saveImage:imageData imageSize:size target:target metadata:nil resolve:resolve reject:reject];
 #else
       [[self.stillImageOutput connectionWithMediaType:AVMediaTypeVideo] setVideoOrientation:orientation];
 
@@ -624,10 +679,50 @@ RCT_EXPORT_METHOD(hasFlash:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRej
           CGImageSourceRef source = CGImageSourceCreateWithData((CFDataRef)imageData, NULL);
           //get all the metadata in the image
           NSMutableDictionary *imageMetadata = [(NSDictionary *) CFBridgingRelease(CGImageSourceCopyPropertiesAtIndex(source, 0, NULL)) mutableCopy];
-
           // create cgimage
           CGImageRef cgImage = CGImageSourceCreateImageAtIndex(source, 0, NULL);
-            
+
+          // setup viewport size before using
+          CGSize viewportSize;
+
+
+            /* ##############################################
+             NOTE: This is for barcode development purposes
+             Cropping of image to actually see what area we are scanning
+             */
+             /*
+            // use some value, this is probably wrong
+            NSNumber *imageWidth = [NSNumber numberWithDouble:[[UIScreen mainScreen] bounds].size.width];
+            NSNumber *imageHeight = [NSNumber numberWithDouble:[[UIScreen mainScreen] bounds].size.height];
+            NSDictionary *options = [NSDictionary dictionaryWithObjectsAndKeys:
+                                     [NSNumber numberWithBool:NO], (NSString *)kCGImageSourceShouldCache,
+                                     nil];
+            CFDictionaryRef imageProperties = CGImageSourceCopyPropertiesAtIndex(source, 0, (CFDictionaryRef)options);
+            if (imageProperties) {
+                // grab actual size of the image
+                imageWidth = (NSNumber *)CFDictionaryGetValue(imageProperties, kCGImagePropertyPixelWidth);
+                imageHeight = (NSNumber *)CFDictionaryGetValue(imageProperties, kCGImagePropertyPixelHeight);
+                CFRelease(imageProperties);
+            }
+
+            // width is height and height is width
+            // calculate our actual crop area
+            double imageUseWidth = [imageHeight doubleValue];
+            double imageUseHeight = [imageWidth doubleValue];
+            double cropWidth = imageUseWidth * self.barcodeFinderPercentageSizeWidth;
+            double cropHeight = imageUseHeight * self.barcodeFinderPercentageSizeHeight;
+            double cropX = (imageUseWidth/2)-(cropWidth/2);
+            double cropY = (imageUseHeight/2)-(cropHeight/2);
+            // wierd, x is y and y is x
+            CGRect scanLimit = CGRectMake(cropY, cropX, cropHeight, cropWidth);
+
+            // crop the image
+            cgImage = CGImageCreateWithImageInRect(cgImage, scanLimit);
+            */
+            // ##############################################
+
+
+
           // Rotate it
           CGImageRef rotatedCGImage;
           if ([options objectForKey:@"rotation"]) {
@@ -656,18 +751,17 @@ RCT_EXPORT_METHOD(hasFlash:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRej
           } else {
             rotatedCGImage = cgImage;
           }
-            
+
           // Crop it
           if (self.cropToPreview) {
-              CGSize viewportSize;
-              
+
               if (UIInterfaceOrientationIsPortrait([[UIApplication sharedApplication] statusBarOrientation]))
               {
                   viewportSize = CGSizeMake(self.previewLayer.frame.size.height, self.previewLayer.frame.size.width);
               } else {
                   viewportSize = CGSizeMake(self.previewLayer.frame.size.width, self.previewLayer.frame.size.height);
               }
-              
+
               CGRect captureRect = CGRectMake(0, 0, CGImageGetWidth(rotatedCGImage), CGImageGetHeight(rotatedCGImage));
               CGRect croppedSize = AVMakeRectWithAspectRatioInsideRect(viewportSize, captureRect);
               rotatedCGImage = CGImageCreateWithImageInRect(rotatedCGImage, croppedSize);
@@ -687,9 +781,18 @@ RCT_EXPORT_METHOD(hasFlash:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRej
           CGImageDestinationAddImage(destination, rotatedCGImage, (CFDictionaryRef) imageMetadata);
           // And write
           CGImageDestinationFinalize(destination);
+          CGSize frameSize;
+          if (UIInterfaceOrientationIsPortrait([[UIApplication sharedApplication] statusBarOrientation]))
+          {
+            frameSize = CGSizeMake(CGImageGetHeight(rotatedCGImage),
+                                   CGImageGetWidth(rotatedCGImage));
+          } else {
+            frameSize = CGSizeMake(CGImageGetWidth(rotatedCGImage),
+                                   CGImageGetHeight(rotatedCGImage));
+          }
           CFRelease(destination);
 
-          [self saveImage:rotatedImageData target:target metadata:imageMetadata resolve:resolve reject:reject];
+          [self saveImage:rotatedImageData imageSize:viewportSize target:target metadata:imageMetadata resolve:resolve reject:reject];
 
           CGImageRelease(rotatedCGImage);
         }
@@ -702,7 +805,7 @@ RCT_EXPORT_METHOD(hasFlash:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRej
 }
 
 
-- (void)saveImage:(NSData*)imageData target:(NSInteger)target metadata:(NSDictionary *)metadata resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+- (void)saveImage:(NSData*)imageData imageSize:(CGSize)imageSize target:(NSInteger)target metadata:(NSDictionary *)metadata resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   NSString *responseString;
 
   if (target == RCTCameraCaptureTargetMemory) {
@@ -741,7 +844,7 @@ RCT_EXPORT_METHOD(hasFlash:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRej
     }];
     return;
   }
-  resolve(@{@"path":responseString});
+  resolve(@{@"path":responseString, @"width":[NSNumber numberWithFloat:imageSize.width], @"height":[NSNumber numberWithFloat:imageSize.height]});
 }
 
 - (CGImageRef)newCGImageRotatedByAngle:(CGImageRef)imgRef angle:(CGFloat)angle
@@ -1078,7 +1181,9 @@ didFinishRecordingToOutputFileAtURL:(NSURL *)outputFileURL
             dispatch_async([self sessionQueue], ^{
                 [self.session beginConfiguration];
                 if ([self.session canSetSessionPreset:quality]) {
-                    self.session.sessionPreset = quality;
+                  self.session.sessionPreset = quality;
+                } else {
+                  self.session.sessionPreset = AVCaptureSessionPresetHigh;
                 }
                 [self.session commitConfiguration];
             });
