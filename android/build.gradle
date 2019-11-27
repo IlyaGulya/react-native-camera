@@ -36,6 +36,7 @@ repositories {
   maven { url "https://jitpack.io" }
 }
 
+
 dependencies {
   compile 'com.facebook.react:react-native:+'
   compile "com.google.zxing:core:3.2.1"
